@@ -38,7 +38,8 @@ public class BridgeService extends Service {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean running = false;
     private ServerSocket serverSocket;
-    private BluetoothSocket btSocket;
+    private volatile BluetoothSocket activeBtSocket;
+    private volatile Socket activeTcpClient;
     private Thread acceptThread;
 
     @Override
@@ -85,16 +86,20 @@ public class BridgeService extends Service {
         try {
             InetAddress bindAddr = InetAddress.getByName(DEFAULT_HOST);
             serverSocket = new ServerSocket(DEFAULT_PORT, 1, bindAddr);
+            serverSocket.setReuseAddress(true);
 
             while (running) {
                 Socket tcpClient = null;
                 try {
                     tcpClient = serverSocket.accept();
+                    tcpClient.setSoTimeout(10000);
+                    activeTcpClient = tcpClient;
                     handleClient(tcpClient);
                 } catch (IOException e) {
                     if (!running) break;
                     showToast("TCP error: " + e.getMessage());
                 } finally {
+                    activeTcpClient = null;
                     closeQuietly(tcpClient);
                 }
             }
@@ -117,14 +122,12 @@ public class BridgeService extends Service {
             return secureSocket;
         } catch (IOException secureErr) {
             closeQuietly(secureSocket);
-            // Fallback for ELM327 clones that reject encrypted/SDP channel negotiation
             BluetoothSocket insecureSocket = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
             try {
                 insecureSocket.connect();
                 return insecureSocket;
             } catch (IOException insecureErr) {
                 closeQuietly(insecureSocket);
-                // Last resort: reflection on RFCOMM channel 1
                 try {
                     Method m = device.getClass().getMethod("createRfcommSocket", int.class);
                     BluetoothSocket chan1Socket = (BluetoothSocket) m.invoke(device, 1);
@@ -150,11 +153,13 @@ public class BridgeService extends Service {
             return;
         }
 
+        BluetoothSocket btSocket = null;
         try {
             showToast("Connecting to BT " + DEFAULT_BT_MAC + "...");
             updateNotification("Connecting to " + DEFAULT_BT_MAC + "...");
             BluetoothDevice device = adapter.getRemoteDevice(DEFAULT_BT_MAC);
             btSocket = openRfcommWithFallback(adapter, device);
+            activeBtSocket = btSocket;
 
             showToast("BT connected to " + DEFAULT_BT_MAC);
             updateNotification("Connected to " + DEFAULT_BT_MAC + " (:" + DEFAULT_PORT + ")");
@@ -164,8 +169,16 @@ public class BridgeService extends Service {
             final InputStream tcpIn = tcpClient.getInputStream();
             final OutputStream tcpOut = tcpClient.getOutputStream();
 
-            Thread tcpToBt = new Thread(() -> pipeStream(tcpIn, btOut), "BTTCP-TCP2BT");
-            Thread btToTcp = new Thread(() -> pipeStream(btIn, tcpOut), "BTTCP-BT2TCP");
+            Thread tcpToBt = new Thread(() -> {
+                pipeStream(tcpIn, btOut);
+                // When TCP client closes/finishes, close BT socket so btToTcp unblocks immediately
+                closeQuietly(activeBtSocket);
+            }, "BTTCP-TCP2BT");
+
+            Thread btToTcp = new Thread(() -> {
+                pipeStream(btIn, tcpOut);
+                closeQuietly(activeTcpClient);
+            }, "BTTCP-BT2TCP");
 
             tcpToBt.start();
             btToTcp.start();
@@ -180,8 +193,8 @@ public class BridgeService extends Service {
                 : e.getClass().getSimpleName();
             showToast("BT failed: " + reason);
         } finally {
+            activeBtSocket = null;
             closeQuietly(btSocket);
-            btSocket = null;
             if (running) {
                 updateNotification("Listening on " + DEFAULT_HOST + ":" + DEFAULT_PORT);
             }
@@ -262,8 +275,10 @@ public class BridgeService extends Service {
 
     private void cleanup() {
         running = false;
-        closeQuietly(btSocket);
-        btSocket = null;
+        closeQuietly(activeBtSocket);
+        activeBtSocket = null;
+        closeQuietly(activeTcpClient);
+        activeTcpClient = null;
         closeQuietly(serverSocket);
         serverSocket = null;
     }
