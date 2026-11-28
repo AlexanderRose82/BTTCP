@@ -1,6 +1,8 @@
 # BTTCP
 Bluetooth-Server-Bridge — Android foreground service bridging a classic Bluetooth SPP/RFCOMM device (such as an ELM327 OBD-II adapter) to a local TCP server (127.0.0.1:35000), built via GitHub Actions with configurable MAC address, host, port, and intent controls.
 
+BTTCP is only for Classic Bluetooth (SPP / RFCOMM with UUID 00001101-0000-1000-8000-00805F9B34FB), not Bluetooth Low Energy (BLE / GATT). BLE devices use characteristics/services rather than a classic RFCOMM serial stream, so a BLE OBD adapter wouldn't connect through BluetoothSocket RFCOMM.
+
 # What the App Actually Does
 In plain terms, BTTCP acts as a local middleman on Android:
 It opens a Bluetooth SPP/RFCOMM connection (00001101-0000-1000-8000-00805F9B34FB) to a target Bluetooth device (like an ELM327 adapter).
@@ -13,9 +15,10 @@ Any local client (such as a Python script in Termux) connects to that TCP port, 
 2. **Local TCP Server:** Listens on a configured host and port (default: `127.0.0.1:35000`) and forwards bidirectional byte streams between TCP clients and the Bluetooth serial connection.
 3. **Foreground Service & Automation:** Runs as an Android foreground service so background clients (such as Python scripts in Termux) can query the device reliably without Android killing the connection immediately.
 
-## App Permissikons 
+## App Permissions 
 
 On Android 12 and newer, the app needs the BLUETOOTH_CONNECT permission (plus legacy BLUETOOTH / BLUETOOTH_ADMIN for older Android versions) to connect to your paired Bluetooth device, as well as FOREGROUND_SERVICE and FOREGROUND_SERVICE_CONNECTED_DEVICE (and POST_NOTIFICATIONS on Android 13+) to stay alive reliably in the background with a status notification.
+The project targets Android 8.0 and newer.
 
 ## Roadmap
 
@@ -24,7 +27,7 @@ On Android 12 and newer, the app needs the BLUETOOTH_CONNECT permission (plus le
 
 ## Building via GitHub Actions
 
-This repository is designed to be edited directly on GitHub.com and built on a GitHub Actions runner (`ubuntu-latest`) without installing the Android SDK locally. Download the resulting APK from the workflow **Artifacts** after a build completes.
+This repository is designed to be built on a GitHub Actions runner (`ubuntu-latest`) without installing the Android SDK locally. Download the resulting APK from the workflow **Artifacts** after a build completes.
 
 ## License
 

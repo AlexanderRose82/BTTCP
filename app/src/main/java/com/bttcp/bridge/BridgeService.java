@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -26,9 +27,17 @@ import java.util.UUID;
 
 public class BridgeService extends Service {
 
+    public static final String PREFS_NAME = "bttcp_prefs";
+    public static final String KEY_BT_MAC = "bt_mac";
+    public static final String KEY_HOST = "tcp_host";
+    public static final String KEY_PORT = "tcp_port";
+    public static final String KEY_SHOW_TOASTS = "show_toasts";
+
     public static final String DEFAULT_BT_MAC = "00:1D:A5:68:98:8B";
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 35000;
+    public static final boolean DEFAULT_SHOW_TOASTS = true;
+
     public static final String ACTION_STOP = "com.bttcp.bridge.ACTION_STOP";
 
     private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
@@ -37,6 +46,10 @@ public class BridgeService extends Service {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean running = false;
+    private volatile String activeMac = DEFAULT_BT_MAC;
+    private volatile String activeHost = DEFAULT_HOST;
+    private volatile int activePort = DEFAULT_PORT;
+
     private ServerSocket serverSocket;
     private volatile BluetoothSocket activeBtSocket;
     private volatile Socket activeTcpClient;
@@ -45,7 +58,24 @@ public class BridgeService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        loadConfigFromPrefs();
         createNotificationChannel();
+    }
+
+    private void loadConfigFromPrefs() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String mac = prefs.getString(KEY_BT_MAC, DEFAULT_BT_MAC);
+        String host = prefs.getString(KEY_HOST, DEFAULT_HOST);
+        int port = prefs.getInt(KEY_PORT, DEFAULT_PORT);
+
+        activeMac = (mac != null && BluetoothAdapter.checkBluetoothAddress(mac)) ? mac : DEFAULT_BT_MAC;
+        activeHost = (host != null && !host.trim().isEmpty()) ? host.trim() : DEFAULT_HOST;
+        activePort = (port >= 1 && port <= 65535) ? port : DEFAULT_PORT;
+    }
+
+    private boolean isToastsEnabled() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getBoolean(KEY_SHOW_TOASTS, DEFAULT_SHOW_TOASTS);
     }
 
     @Override
@@ -58,20 +88,24 @@ public class BridgeService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification("Listening on " + DEFAULT_HOST + ":" + DEFAULT_PORT));
+        loadConfigFromPrefs();
+        startForeground(NOTIFICATION_ID, buildNotification("Listening on " + activeHost + ":" + activePort));
 
         if (!running) {
             running = true;
             acceptThread = new Thread(this::runServerLoop, "BTTCP-AcceptLoop");
             acceptThread.start();
-            showToast("Bridge listening on " + DEFAULT_HOST + ":" + DEFAULT_PORT);
+            showToast("Bridge listening on " + activeHost + ":" + activePort);
         } else {
-            showToast("Bridge already running");
+            showToast("Bridge already running (" + activeMac + " -> " + activeHost + ":" + activePort + ")");
         }
         return START_STICKY;
     }
 
     private void showToast(String message) {
+        if (!isToastsEnabled()) {
+            return;
+        }
         mainHandler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
     }
 
@@ -84,8 +118,8 @@ public class BridgeService extends Service {
 
     private void runServerLoop() {
         try {
-            InetAddress bindAddr = InetAddress.getByName(DEFAULT_HOST);
-            serverSocket = new ServerSocket(DEFAULT_PORT, 1, bindAddr);
+            InetAddress bindAddr = InetAddress.getByName(activeHost);
+            serverSocket = new ServerSocket(activePort, 1, bindAddr);
             serverSocket.setReuseAddress(true);
 
             while (running) {
@@ -104,7 +138,7 @@ public class BridgeService extends Service {
                 }
             }
         } catch (IOException e) {
-            showToast("Failed to bind " + DEFAULT_HOST + ":" + DEFAULT_PORT);
+            showToast("Failed to bind " + activeHost + ":" + activePort);
         } finally {
             cleanup();
         }
@@ -155,14 +189,14 @@ public class BridgeService extends Service {
 
         BluetoothSocket btSocket = null;
         try {
-            showToast("Connecting to BT " + DEFAULT_BT_MAC + "...");
-            updateNotification("Connecting to " + DEFAULT_BT_MAC + "...");
-            BluetoothDevice device = adapter.getRemoteDevice(DEFAULT_BT_MAC);
+            showToast("Connecting to BT " + activeMac + "...");
+            updateNotification("Connecting to " + activeMac + "...");
+            BluetoothDevice device = adapter.getRemoteDevice(activeMac);
             btSocket = openRfcommWithFallback(adapter, device);
             activeBtSocket = btSocket;
 
-            showToast("BT connected to " + DEFAULT_BT_MAC);
-            updateNotification("Connected to " + DEFAULT_BT_MAC + " (:" + DEFAULT_PORT + ")");
+            showToast("BT connected to " + activeMac);
+            updateNotification("Connected to " + activeMac + " (:" + activePort + ")");
 
             final InputStream btIn = btSocket.getInputStream();
             final OutputStream btOut = btSocket.getOutputStream();
@@ -171,7 +205,6 @@ public class BridgeService extends Service {
 
             Thread tcpToBt = new Thread(() -> {
                 pipeStream(tcpIn, btOut);
-                // When TCP client closes/finishes, close BT socket so btToTcp unblocks immediately
                 closeQuietly(activeBtSocket);
             }, "BTTCP-TCP2BT");
 
@@ -196,7 +229,7 @@ public class BridgeService extends Service {
             activeBtSocket = null;
             closeQuietly(btSocket);
             if (running) {
-                updateNotification("Listening on " + DEFAULT_HOST + ":" + DEFAULT_PORT);
+                updateNotification("Listening on " + activeHost + ":" + activePort);
             }
         }
     }
