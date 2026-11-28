@@ -3,6 +3,8 @@ Bluetooth-Server-Bridge — Android foreground service bridging a classic Blueto
 
 BTTCP is only for Classic Bluetooth (SPP / RFCOMM with UUID 00001101-0000-1000-8000-00805F9B34FB), not Bluetooth Low Energy (BLE / GATT). BLE devices use characteristics/services rather than a classic RFCOMM serial stream, so a BLE OBD adapter wouldn't connect through BluetoothSocket RFCOMM.
 
+If a device acts like a wireless RS-232 / UART serial port (usually ESP32, Arduino, HC-05/JDY-31 expecting serial commands) over Classic Bluetooth, BTTCP can bridge it to TCP. If it relies on BLE, audio (A2DP), or consumer smart-home profiles, you will need a different tool.
+
 # What the App Actually Does
 In plain terms, BTTCP acts as a local middleman on Android:
 It opens a Bluetooth SPP/RFCOMM connection (00001101-0000-1000-8000-00805F9B34FB) to a target Bluetooth device (like an ELM327 adapter).
@@ -18,6 +20,7 @@ Any local client (such as a Python script in Termux) connects to that TCP port, 
 ## App Permissions 
 
 On Android 12 and newer, the app needs the BLUETOOTH_CONNECT permission (plus legacy BLUETOOTH / BLUETOOTH_ADMIN for older Android versions) to connect to your paired Bluetooth device, as well as FOREGROUND_SERVICE and FOREGROUND_SERVICE_CONNECTED_DEVICE (and POST_NOTIFICATIONS on Android 13+) to stay alive reliably in the background with a status notification.
+
 The project targets Android 8.0 and newer.
 
 ## Roadmap
